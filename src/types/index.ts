@@ -68,16 +68,17 @@ export interface HistoryItem {
 }
 
 export type AppState =
-  | 'NO_VACANCY'       // Состояние 1: Не открыта вакансия
-  | 'VACANCY_FOUND'    // Состояние 2: Вакансия найдена
-  | 'ANALYZING'        // Состояние 3: Вакансия анализируется
-  | 'ANALYSIS_DONE'    // Состояние 4: Анализ завершён
-  | 'LETTER_READY'     // Состояние 5: Готово сопроводительное
+  | 'NO_VACANCY'
+  | 'VACANCY_FOUND'
+  | 'ANALYZING'
+  | 'ANALYSIS_DONE'
+  | 'LETTER_READY'
   | 'ERROR';
 
 export interface ExtensionMessage {
   type:
     | 'VACANCY_DETECTED'
+    | 'VACANCY_CLEARED'
     | 'GET_CURRENT_VACANCY'
     | 'REQUEST_VACANCY_EXTRACT'
     | 'OPEN_SIDE_PANEL'
