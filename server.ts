@@ -76,7 +76,20 @@ function parseJson<T>(text: string): T {
 
 const ANALYSIS_SCHEMA = `Return ONLY valid JSON with exactly these keys: strongMatches, partialMatches, unknownRequirements, recommendedAchievements, risks. Every value must be an array of strings.`;
 
+const MODE_INSTRUCTIONS: Record<string, string> = {
+  shorter: 'Make the letter concise and punchy (aim for under 600 characters). Cut filler words while keeping core achievements, figures and facts intact.',
+  livelier: 'Use an engaging, confident and energetic conversational tone while maintaining professional standards. Do not alter facts.',
+  more_concrete: 'Emphasize quantifiable achievements, concrete numbers, conversion rates and deal sizes already present.',
+  business_focused: 'Frame qualifications around business value, sales cycles, revenue generation, enterprise LTV and client retention.',
+  anti_bureaucracy: 'Strip out all corporate clichés, stiff formulations and robotic boilerplate. Use clear, simple, human language.',
+  default: 'Maintain a balanced, polite and focused professional B2B tone.'
+};
+
 app.post('/api/analyze', rateLimit, async (req, res) => {
+  if (!geminiApiKey) {
+    return res.status(503).json({ error: 'AI service is not configured on the server' });
+  }
+
   try {
     const { vacancy, profile } = req.body || {};
     if (!vacancy || !profile) return res.status(400).json({ error: 'vacancy and profile are required' });
@@ -98,11 +111,16 @@ app.post('/api/analyze', rateLimit, async (req, res) => {
 });
 
 app.post('/api/generate-cover-letter', rateLimit, async (req, res) => {
+  if (!geminiApiKey) {
+    return res.status(503).json({ error: 'AI service is not configured on the server' });
+  }
+
   try {
     const { vacancy, profile, analysis, mode = 'default' } = req.body || {};
     if (!vacancy || !profile || !analysis) return res.status(400).json({ error: 'vacancy, profile and analysis are required' });
 
-    const prompt = `Write a short natural Russian cover letter for this vacancy. The candidate is applying personally. Do not write a resume summary. Connect 2-3 relevant confirmed facts from the profile to the employer's needs. Explicitly show what the candidate can contribute to this business. Never invent facts. Do not mention information absent from the profile. Avoid bureaucratic phrases, generic AI clichés, exaggerated enthusiasm and empty claims. Use only straight double quotes and write currency as руб. Do not add contact details; the client will append them. Mode: ${String(mode)}.\n\nVACANCY:\n${compact(vacancy)}\n\nCANDIDATE PROFILE:\n${compact(profile)}\n\nANALYSIS:\n${compact(analysis)}`;
+    const modeGuidance = MODE_INSTRUCTIONS[mode] || MODE_INSTRUCTIONS.default;
+    const prompt = `Write a short natural Russian cover letter for this vacancy. The candidate is applying personally. Do not write a resume summary. Connect 2-3 relevant confirmed facts from the profile to the employer's needs. Explicitly show what the candidate can contribute to this business. Never invent facts. Do not mention information absent from the profile. Avoid bureaucratic phrases, generic AI clichés, exaggerated enthusiasm and empty claims. Use only straight double quotes and write currency as руб. Do not add contact details; the client will append them. Mode: ${String(mode)} (${modeGuidance}).\n\nVACANCY:\n${compact(vacancy)}\n\nCANDIDATE PROFILE:\n${compact(profile)}\n\nANALYSIS:\n${compact(analysis)}`;
     const text = await callGemini(prompt);
     res.json({ text });
   } catch (error) {
@@ -112,11 +130,16 @@ app.post('/api/generate-cover-letter', rateLimit, async (req, res) => {
 });
 
 app.post('/api/rewrite-cover-letter', rateLimit, async (req, res) => {
+  if (!geminiApiKey) {
+    return res.status(503).json({ error: 'AI service is not configured on the server' });
+  }
+
   try {
     const { vacancy, profile, analysis, text, mode = 'default' } = req.body || {};
     if (!vacancy || !profile || !text) return res.status(400).json({ error: 'vacancy, profile and text are required' });
 
-    const prompt = `Rewrite the supplied Russian cover letter for the same vacancy. Preserve every factual claim: do not add new achievements, companies, technologies, skills or numbers. Keep it short and natural. Mode: ${String(mode)}.\n\nVACANCY:\n${compact(vacancy)}\n\nPROFILE:\n${compact(profile)}\n\nANALYSIS:\n${compact(analysis || {})}\n\nCURRENT LETTER:\n${text}`;
+    const modeGuidance = MODE_INSTRUCTIONS[mode] || MODE_INSTRUCTIONS.default;
+    const prompt = `Rewrite the supplied Russian cover letter for the same vacancy. Strictly preserve every factual claim: do not add new achievements, companies, technologies, skills, or numbers. Do not invent any experience. Change only style, tone and presentation according to the requested mode. Use only straight double quotes and write currency as руб. Do not append contact details. Mode: ${String(mode)} (${modeGuidance}).\n\nVACANCY:\n${compact(vacancy)}\n\nPROFILE:\n${compact(profile)}\n\nANALYSIS:\n${compact(analysis || {})}\n\nCURRENT LETTER:\n${text}`;
     const rewritten = await callGemini(prompt);
     res.json({ text: rewritten });
   } catch (error) {
