@@ -2,12 +2,87 @@ import { VacancyData } from '../types';
 import { normalizeQuotesAndCurrency, stripHtml } from '../utils/formatter';
 
 /**
+ * Извлекает идентификатор вакансии непосредственно из DOM-дерева текущей страницы.
+ * Служит для гарантированной защиты от SPA stale vacancy при переходах A -> B -> C.
+ */
+export function extractDomVacancyId(doc: Document): string | null {
+  const canonical = doc.querySelector('link[rel="canonical"]')?.getAttribute('href');
+  const canonicalMatch = canonical?.match(/\/vacancy\/(\d+)/);
+  if (canonicalMatch) return canonicalMatch[1];
+
+  const ogUrl = doc.querySelector('meta[property="og:url"], meta[name="og:url"]')?.getAttribute('content');
+  const ogMatch = ogUrl?.match(/\/vacancy\/(\d+)/);
+  if (ogMatch) return ogMatch[1];
+
+  const responseBtn = doc.querySelector(
+    '[data-qa="vacancy-response-link-top"], [data-qa="vacancy-response-link-bottom"], [data-qa*="vacancy-response"], a[href*="/applicant/vacancy_response"], a[href*="/vacancy_response"]'
+  );
+  const btnHref = responseBtn?.getAttribute('href');
+  if (btnHref) {
+    const m = btnHref.match(/vacancyId=(\d+)|\/vacancy\/(\d+)/);
+    if (m) return m[1] || m[2];
+  }
+
+  const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+  for (const script of Array.from(scripts)) {
+    try {
+      const parsed = JSON.parse(script.textContent || '');
+      const candidates = flattenJsonLd(parsed);
+      for (const item of candidates) {
+        if (item?.['@type'] === 'JobPosting') {
+          const urlStr = item.url || item['@id'] || (typeof item.identifier === 'object' ? item.identifier?.value : item.identifier);
+          if (typeof urlStr === 'string') {
+            const m = urlStr.match(/\/vacancy\/(\d+)/) || urlStr.match(/^(\d+)$/);
+            if (m) return m[1];
+          }
+        }
+      }
+    } catch {
+      // Игнорируем невалидный JSON-LD
+    }
+  }
+
+  const shareOrAction = doc.querySelector('a[href*="/vacancy/"][data-qa*="vacancy-view"], a[href*="/vacancy/"][data-qa*="response"]');
+  const shareMatch = shareOrAction?.getAttribute('href')?.match(/\/vacancy\/(\d+)/);
+  if (shareMatch) return shareMatch[1];
+
+  return null;
+}
+
+/**
+ * Проверяет, подтверждает ли текущий DOM соответствие запрашиваемому vacancyId.
+ * Защищает от сценария SPA stale vacancy (A -> B -> C).
+ */
+export function isDomMatchingVacancy(doc: Document, expectedVacancyId: string): boolean {
+  const domId = extractDomVacancyId(doc);
+  if (domId) return domId === expectedVacancyId;
+
+  const hasMatchingLink = !!doc.querySelector(
+    `a[href*="/vacancy/${expectedVacancyId}"], a[href*="vacancyId=${expectedVacancyId}"], form[action*="${expectedVacancyId}"], [data-vacancy-id="${expectedVacancyId}"]`
+  );
+  if (hasMatchingLink) return true;
+
+  const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+  for (const script of Array.from(scripts)) {
+    if ((script.textContent || '').includes(expectedVacancyId)) return true;
+  }
+
+  const hasMatchingAttr = !!doc.querySelector(
+    `[data-qa*="${expectedVacancyId}"], [data-item-id="${expectedVacancyId}"]`
+  );
+  return hasMatchingAttr;
+}
+
+/**
  * Извлекает структурированные данные вакансии со страницы hh.ru.
  * Приоритет: DOM-селекторы HH.ru -> Schema.org JSON-LD -> fallback.
  */
 export function extractVacancyFromDocument(doc: Document = document, currentUrl: string = window.location.href): VacancyData | null {
   const vacancyIdMatch = currentUrl.match(/\/vacancy\/(\d+)/);
   const vacancyId: string | null = vacancyIdMatch ? vacancyIdMatch[1] : null;
+
+  if (vacancyId && !isDomMatchingVacancy(doc, vacancyId)) return null;
+
   const jsonLdData = extractFromJsonLd(doc);
 
   let title = querySelectorText(doc, [
