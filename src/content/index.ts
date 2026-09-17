@@ -22,6 +22,13 @@ function clearCurrentVacancy() {
   if (typeof chrome !== 'undefined' && chrome.storage?.local) {
     chrome.storage.local.remove('hh_reply_ai_current_vacancy').catch(() => undefined);
   }
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    try {
+      chrome.runtime.sendMessage({ type: 'VACANCY_CLEARED' } as ExtensionMessage);
+    } catch {
+      // Extension context may not be available.
+    }
+  }
 }
 
 function notifyVacancy(vacancy: VacancyData) {
@@ -46,7 +53,9 @@ function processCurrentPage(attempt = 0) {
   if (vacancyId !== lastVacancyId) {
     currentVacancyCache = null;
     removeBadge();
-    lastVacancyId = vacancyId;
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.remove('hh_reply_ai_current_vacancy').catch(() => undefined);
+    }
   }
 
   const vacancy = extractVacancyFromDocument(document, currentUrl);
@@ -63,11 +72,10 @@ function processCurrentPage(attempt = 0) {
     return;
   }
 
-  // HH.ru often renders the vacancy body after the URL changes.
-  // Retry a few times instead of keeping an unbounded MutationObserver loop.
-  if (attempt < 4) {
+  // HH.ru часто рендерит DOM асинхронно после смены URL в SPA.
+  if (attempt < 10) {
     if (retryTimer !== null) window.clearTimeout(retryTimer);
-    retryTimer = window.setTimeout(() => processCurrentPage(attempt + 1), 500 * (attempt + 1));
+    retryTimer = window.setTimeout(() => processCurrentPage(attempt + 1), 350);
   }
 }
 
@@ -84,10 +92,15 @@ function injectOrUpdateBadge(vacancy: VacancyData) {
       'font-weight:500;cursor:pointer;display:flex;align-items:center;gap:8px;' +
       'box-shadow:0 10px 25px -5px rgba(0,0,0,.3);transition:transform .2s ease,background .2s ease;'
     );
+    badge.title = 'Открыть ассистент HH Reply AI (нажмите значок ✨ в панели расширений Chrome)';
     badge.addEventListener('mouseenter', () => { badge!.style.transform = 'translateY(-2px)'; });
     badge.addEventListener('mouseleave', () => { badge!.style.transform = 'translateY(0)'; });
     badge.addEventListener('click', () => {
-      try { chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' } as ExtensionMessage); } catch { /* noop */ }
+      try {
+        chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' } as ExtensionMessage);
+      } catch {
+        /* noop */
+      }
     });
     document.body.appendChild(badge);
   }
@@ -117,7 +130,12 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
         lastVacancyId = vacancy.vacancyId;
         sendResponse(vacancy);
       } else {
-        sendResponse(currentVacancyCache);
+        const currentUrlId = getVacancyId(window.location.href);
+        if (currentVacancyCache && currentVacancyCache.vacancyId === currentUrlId) {
+          sendResponse(currentVacancyCache);
+        } else {
+          sendResponse(null);
+        }
       }
       return true;
     }
