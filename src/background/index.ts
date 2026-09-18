@@ -25,7 +25,6 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   }
 
   if (message.type === 'VACANCY_DETECTED') {
-    // Сохраняем в storage
     if (message.payload) {
       chrome.storage.local.set({ hh_reply_ai_current_vacancy: message.payload });
     }
@@ -36,11 +35,37 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 
 // Отслеживаем обновление вкладок для оповещения Side Panel при переходах по вакансиям
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url && (tab.url.includes('hh.ru/vacancy/') || tab.url.includes('/vacancy/'))) {
-    chrome.tabs.sendMessage(tabId, { type: 'REQUEST_VACANCY_EXTRACT' }, (res) => {
-      if (!chrome.runtime.lastError && res) {
-        chrome.storage.local.set({ hh_reply_ai_current_vacancy: res });
-      }
-    });
+  if (changeInfo.status === 'complete') {
+    const isVacancy = tab.url && (tab.url.includes('hh.ru/vacancy/') || tab.url.includes('/vacancy/'));
+    if (isVacancy) {
+      chrome.tabs.sendMessage(tabId, { type: 'REQUEST_VACANCY_EXTRACT' }, (res) => {
+        if (!chrome.runtime.lastError && res) {
+          chrome.storage.local.set({ hh_reply_ai_current_vacancy: res });
+        }
+      });
+    } else if (tab.active) {
+      chrome.storage.local.remove('hh_reply_ai_current_vacancy').catch(() => undefined);
+    }
+  }
+});
+
+// Отслеживаем переключение активной вкладки
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  try {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    const isVacancy = tab.url && (tab.url.includes('hh.ru/vacancy/') || tab.url.includes('/vacancy/'));
+    if (!isVacancy) {
+      chrome.storage.local.remove('hh_reply_ai_current_vacancy').catch(() => undefined);
+      chrome.runtime.sendMessage({ type: 'VACANCY_CLEARED' } as ExtensionMessage).catch(() => undefined);
+    } else {
+      chrome.tabs.sendMessage(tab.id!, { type: 'REQUEST_VACANCY_EXTRACT' }, (res) => {
+        if (!chrome.runtime.lastError && res) {
+          chrome.storage.local.set({ hh_reply_ai_current_vacancy: res });
+          chrome.runtime.sendMessage({ type: 'VACANCY_DETECTED', payload: res } as ExtensionMessage).catch(() => undefined);
+        }
+      });
+    }
+  } catch {
+    // Ignore tab errors
   }
 });

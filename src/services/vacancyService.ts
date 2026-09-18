@@ -13,23 +13,19 @@ class VacancyService {
           return null;
         }
 
-        // Проверяем, что это страница вакансии на hh.ru
         const isHhVacancy = activeTab.url.includes('hh.ru/vacancy/') || activeTab.url.includes('hh.ru/vacancy?');
         if (!isHhVacancy) {
-          // Если мы не на вакансии, очищаем текущую вакансию
           await storageService.setCurrentVacancy(null);
           return null;
         }
 
-        // Отправляем сообщение content script
         const response = await new Promise<VacancyData | null>((resolve) => {
           chrome.tabs.sendMessage(
             activeTab.id!,
             { type: 'REQUEST_VACANCY_EXTRACT' },
             (res) => {
               if (chrome.runtime.lastError) {
-                // Если скрипт еще не успел внедриться, можно попробовать прочитать из storage
-                storageService.getCurrentVacancy().then(resolve);
+                resolve(null);
                 return;
               }
               resolve(res || null);
@@ -41,12 +37,15 @@ class VacancyService {
           await storageService.setCurrentVacancy(response);
           return response;
         }
+
+        return null;
       } catch (err) {
         console.warn('Error querying tab for vacancy data:', err);
+        return null;
       }
     }
 
-    // Fallback: читаем сохраненную вакансию из хранилища
+    // Fallback: читаем сохраненную вакансию из хранилища только для Web/preview режима
     return await storageService.getCurrentVacancy();
   }
 }

@@ -5,6 +5,7 @@ let currentVacancyCache: VacancyData | null = null;
 let lastUrl = window.location.href;
 let lastVacancyId: string | null = null;
 let retryTimer: number | null = null;
+let navigationGeneration = 0;
 let badgeElement: HTMLElement | null = null;
 
 function isVacancyUrl(url: string): boolean {
@@ -16,11 +17,23 @@ function getVacancyId(url: string): string | null {
 }
 
 function clearCurrentVacancy() {
+  navigationGeneration += 1;
+  if (retryTimer !== null) {
+    window.clearTimeout(retryTimer);
+    retryTimer = null;
+  }
   currentVacancyCache = null;
   lastVacancyId = null;
   removeBadge();
   if (typeof chrome !== 'undefined' && chrome.storage?.local) {
     chrome.storage.local.remove('hh_reply_ai_current_vacancy').catch(() => undefined);
+  }
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    try {
+      chrome.runtime.sendMessage({ type: 'VACANCY_CLEARED' } as ExtensionMessage);
+    } catch {
+      // Extension context may not be available.
+    }
   }
 }
 
@@ -34,7 +47,9 @@ function notifyVacancy(vacancy: VacancyData) {
   }
 }
 
-function processCurrentPage(attempt = 0) {
+function processCurrentPage(attempt = 0, generation = navigationGeneration) {
+  if (generation !== navigationGeneration) return;
+
   const currentUrl = window.location.href;
   const vacancyId = getVacancyId(currentUrl);
 
@@ -46,13 +61,17 @@ function processCurrentPage(attempt = 0) {
   if (vacancyId !== lastVacancyId) {
     currentVacancyCache = null;
     removeBadge();
-    lastVacancyId = vacancyId;
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.remove('hh_reply_ai_current_vacancy').catch(() => undefined);
+    }
   }
 
   const vacancy = extractVacancyFromDocument(document, currentUrl);
-  if (vacancy?.title) {
+  if (generation !== navigationGeneration || window.location.href !== currentUrl) return;
+
+  if (vacancy?.title && vacancy.vacancyId === vacancyId) {
     currentVacancyCache = vacancy;
-    lastVacancyId = vacancy.vacancyId ?? vacancyId;
+    lastVacancyId = vacancyId;
 
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.set({ hh_reply_ai_current_vacancy: vacancy }).catch(() => undefined);
@@ -60,14 +79,17 @@ function processCurrentPage(attempt = 0) {
 
     notifyVacancy(vacancy);
     injectOrUpdateBadge(vacancy);
+    retryTimer = null;
     return;
   }
 
-  // HH.ru often renders the vacancy body after the URL changes.
-  // Retry a few times instead of keeping an unbounded MutationObserver loop.
-  if (attempt < 4) {
+  // HH.ru часто рендерит DOM асинхронно после смены URL в SPA.
+  if (attempt < 10 && generation === navigationGeneration) {
     if (retryTimer !== null) window.clearTimeout(retryTimer);
-    retryTimer = window.setTimeout(() => processCurrentPage(attempt + 1), 500 * (attempt + 1));
+    retryTimer = window.setTimeout(() => {
+      retryTimer = null;
+      processCurrentPage(attempt + 1, generation);
+    }, 350);
   }
 }
 
@@ -84,10 +106,15 @@ function injectOrUpdateBadge(vacancy: VacancyData) {
       'font-weight:500;cursor:pointer;display:flex;align-items:center;gap:8px;' +
       'box-shadow:0 10px 25px -5px rgba(0,0,0,.3);transition:transform .2s ease,background .2s ease;'
     );
+    badge.title = 'Открыть ассистент HH Reply AI (нажмите значок ✨ в панели расширений Chrome)';
     badge.addEventListener('mouseenter', () => { badge!.style.transform = 'translateY(-2px)'; });
     badge.addEventListener('mouseleave', () => { badge!.style.transform = 'translateY(0)'; });
     badge.addEventListener('click', () => {
-      try { chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' } as ExtensionMessage); } catch { /* noop */ }
+      try {
+        chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' } as ExtensionMessage);
+      } catch {
+        /* noop */
+      }
     });
     document.body.appendChild(badge);
   }
@@ -111,13 +138,17 @@ function removeBadge() {
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
     if (message.type === 'REQUEST_VACANCY_EXTRACT') {
-      const vacancy = extractVacancyFromDocument(document, window.location.href);
-      if (vacancy) {
+      const requestUrl = window.location.href;
+      const requestVacancyId = getVacancyId(requestUrl);
+      const vacancy = requestVacancyId ? extractVacancyFromDocument(document, requestUrl) : null;
+      if (vacancy?.vacancyId === requestVacancyId) {
         currentVacancyCache = vacancy;
         lastVacancyId = vacancy.vacancyId;
         sendResponse(vacancy);
-      } else {
+      } else if (requestVacancyId && currentVacancyCache?.vacancyId === requestVacancyId) {
         sendResponse(currentVacancyCache);
+      } else {
+        sendResponse(null);
       }
       return true;
     }
@@ -130,10 +161,15 @@ function handleNavigation() {
     processCurrentPage();
     return;
   }
+
   lastUrl = url;
-  if (retryTimer !== null) window.clearTimeout(retryTimer);
+  navigationGeneration += 1;
+  if (retryTimer !== null) {
+    window.clearTimeout(retryTimer);
+    retryTimer = null;
+  }
   clearCurrentVacancy();
-  processCurrentPage();
+  processCurrentPage(0, navigationGeneration);
 }
 
 function observeNavigation() {
