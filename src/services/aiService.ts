@@ -208,7 +208,7 @@ class AIService {
   private rewriteLocally(vacancy: VacancyData, profile: UserProfile, analysis: VacancyAnalysis, currentText: string, mode: RewriteMode): string {
     // Local fallback must transform the current letter deterministically.
     // Never append a stock closing line if an equivalent closing already exists.
-    const contactPattern = /(?:^|\n)(?:@tattytoo|\+79151000852|Татьяна(?:\n|$)|https:\/\/t\.me\/tattytoo)[\\s\\S]*$/i;
+    const contactPattern = /(?:^|\n)(?:@tattytoo|\+79151000852|Татьяна(?:\n|$)|https:\/\/t\.me\/tattytoo)[\s\\S]*$/i;
     let body = currentText.replace(contactPattern, '').trim();
 
     if (!body) {
@@ -217,15 +217,15 @@ class AIService {
 
     const cleanClosing = (text: string) =>
       text
-        .replace(/(?:\\n\\s*)?(?:Буду рада (?:познакомиться лично и )?обсудить (?:детали сотрудничества|задачи(?: позиции)?(?: и то, чем могу быть полезна вашему бизнесу)?)[.!]?)(?:\\n\\s*)?/gi, '\\n')
-        .replace(/(?:\\n\\s*)?(?:Буду рада обсудить задачи подробнее)[.!]?(?:\\n\\s*)?/gi, '\\n')
-        .replace(/(?:\\n\\s*)?(?:С удовольствием подключусь к диалогу и отвечу на любые вопросы)[.!]?(?:\\n\\s*)?/gi, '\\n')
-        .replace(/\\n{3,}/g, '\\n\\n')
+        .replace(/(?:\n\s*)?(?:Буду рада (?:познакомиться лично и )?обсудить (?:детали сотрудничества|задачи(?: позиции)?(?: и то, чем могу быть полезна вашему бизнесу)?)[.!]?)(?:\n\s*)?/gi, '\n')
+        .replace(/(?:\n\s*)?(?:Буду рада обсудить задачи подробнее)[.!]?(?:\n\s*)?/gi, '\n')
+        .replace(/(?:\n\s*)?(?:С удовольствием подключусь к диалогу и отвечу на любые вопросы)[.!]?(?:\n\s*)?/gi, '\n')
+        .replace(/\n{3,}/g, '\n\n')
         .trim();
 
     const addClosing = (text: string, closing: string) => {
       const cleaned = cleanClosing(text);
-      return \`${cleaned}\\n\\n${closing}\\n\`.trim();
+      return `${cleaned}\n\n${closing}\n`.trim();
     };
 
     body = cleanClosing(body);
@@ -233,25 +233,25 @@ class AIService {
     switch (mode) {
       case 'shorter': {
         const paragraphs = body
-          .split(/\\n\\s*\\n/)
+          .split(/\n\s*\n/)
           .map(p => p.trim())
           .filter(Boolean);
 
         const essential = paragraphs
-          .map(p => p.replace(/^(Здравствуйте|Добрый день)[,.]?\\s*/i, '').trim())
+          .map(p => p.replace(/^(Здравствуйте|Добрый день)[,.]?\s*/i, '').trim())
           .filter(p =>
             p.length > 0 &&
             !/внимательно изучила задачи позиции|пишу по поводу вакансии|обратила внимание на вакансию/i.test(p)
           );
 
-        body = ['Здравствуйте.', ...essential].join('\\n\\n');
+        body = ['Здравствуйте.', ...essential].join('\n\n');
         body = addClosing(body, 'Буду рада обсудить задачи позиции и то, чем могу быть полезна вашему бизнесу.');
         break;
       }
 
       case 'livelier': {
-        body = body.replace(/^(Здравствуйте|Добрый день)[,.]?\\s*/i, '').trim();
-        body = \`Добрый день!\\n\\n${body}\`;
+        body = body.replace(/^(Здравствуйте|Добрый день)[,.]?\s*/i, '').trim();
+        body = `Добрый день!\n\n${body}`;
         body = addClosing(body, 'Буду рада обсудить задачи и рассказать подробнее о своем опыте.');
         break;
       }
@@ -268,8 +268,8 @@ class AIService {
       }
 
       case 'business_focused': {
-        body = body.replace(/^(Привет|Добрый день|Здравствуйте)[,!]?\\s*/i, '').trim();
-        body = \`Здравствуйте.\\n\\n${body}\`;
+        body = body.replace(/^(Привет|Добрый день|Здравствуйте)[,!]?\s*/i, '').trim();
+        body = `Здравствуйте.\n\n${body}`;
         body = addClosing(body, 'Буду рада обсудить задачи позиции и ожидаемый результат.');
         break;
       }
@@ -282,7 +282,7 @@ class AIService {
           .replace(/данная вакансия вызвала у меня интерес/gi, 'вакансия мне интересна')
           .replace(/осуществлять руководство/gi, 'руководить')
           .replace(/пишу по поводу вакансии/gi, 'откликаюсь на вакансию')
-          .replace(/\\n{3,}/g, '\\n\\n')
+          .replace(/\n{3,}/g, '\n\n')
           .trim();
         body = addClosing(body, 'Буду рада обсудить задачи позиции.');
         break;
@@ -293,10 +293,10 @@ class AIService {
         // "Переписать" in the local fallback should at least produce a clean,
         // single version instead of returning the input unchanged.
         body = body
-          .replace(/^(Здравствуйте|Добрый день)[,.]?\\s*/i, '')
-          .replace(/\\n{3,}/g, '\\n\\n')
+          .replace(/^(Здравствуйте|Добрый день)[,.]?\s*/i, '')
+          .replace(/\n{3,}/g, '\n\n')
           .trim();
-        body = \`Здравствуйте.\\n\\n${body}\`;
+        body = `Здравствуйте.\n\n${body}`;
         body = addClosing(body, 'Буду рада обсудить детали позиции и то, чем могу быть полезна вашему бизнесу.');
         break;
       }
