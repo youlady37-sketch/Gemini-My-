@@ -206,41 +206,74 @@ class AIService {
   }
 
   private rewriteLocally(vacancy: VacancyData, profile: UserProfile, analysis: VacancyAnalysis, currentText: string, mode: RewriteMode): string {
-    let body = currentText
-      .replace(/@tattytoo[\s\S]*$/i, '')
-      .replace(/\+79151000852[\s\S]*$/i, '')
-      .trim();
+    // Local fallback must transform the current letter deterministically.
+    // Never append a stock closing line if an equivalent closing already exists.
+    const contactPattern = /(?:^|\n)(?:@tattytoo|\+79151000852|Татьяна(?:\n|$)|https:\/\/t\.me\/tattytoo)[\\s\\S]*$/i;
+    let body = currentText.replace(contactPattern, '').trim();
 
     if (!body) {
       throw new Error('В письме остался только контактный блок. Добавьте текст письма перед переписыванием.');
     }
 
+    const cleanClosing = (text: string) =>
+      text
+        .replace(/(?:\\n\\s*)?(?:Буду рада (?:познакомиться лично и )?обсудить (?:детали сотрудничества|задачи(?: позиции)?(?: и то, чем могу быть полезна вашему бизнесу)?)[.!]?)(?:\\n\\s*)?/gi, '\\n')
+        .replace(/(?:\\n\\s*)?(?:Буду рада обсудить задачи подробнее)[.!]?(?:\\n\\s*)?/gi, '\\n')
+        .replace(/(?:\\n\\s*)?(?:С удовольствием подключусь к диалогу и отвечу на любые вопросы)[.!]?(?:\\n\\s*)?/gi, '\\n')
+        .replace(/\\n{3,}/g, '\\n\\n')
+        .trim();
+
+    const addClosing = (text: string, closing: string) => {
+      const cleaned = cleanClosing(text);
+      return \`${cleaned}\\n\\n${closing}\\n\`.trim();
+    };
+
+    body = cleanClosing(body);
+
     switch (mode) {
       case 'shorter': {
-        const paragraphs = body.split(/\n\s*\n/).filter(Boolean);
+        const paragraphs = body
+          .split(/\\n\\s*\\n/)
+          .map(p => p.trim())
+          .filter(Boolean);
+
         const essential = paragraphs
-          .map(p => p.replace(/^(Здравствуйте|Добрый день)[,.]?\s*/i, '').trim())
-          .filter(p => p.length > 0 && !p.toLowerCase().includes('внимательно изучила') && !p.toLowerCase().includes('пишу по поводу'));
-        body = `Здравствуйте.\n\n${essential.join('\n\n')}\n\nБуду рада обсудить задачи подробнее.`;
+          .map(p => p.replace(/^(Здравствуйте|Добрый день)[,.]?\\s*/i, '').trim())
+          .filter(p =>
+            p.length > 0 &&
+            !/внимательно изучила задачи позиции|пишу по поводу вакансии|обратила внимание на вакансию/i.test(p)
+          );
+
+        body = ['Здравствуйте.', ...essential].join('\\n\\n');
+        body = addClosing(body, 'Буду рада обсудить задачи позиции и то, чем могу быть полезна вашему бизнесу.');
         break;
       }
+
       case 'livelier': {
-        body = body.replace(/^(Здравствуйте|Добрый день)[,.]?\s*/i, '');
-        body = `Добрый день!\n\n${body.trim()}`;
-        if (!body.includes('Буду рада') && !body.includes('Готова') && !body.includes('подключусь')) body += `\n\nС удовольствием подключусь к диалогу и отвечу на любые вопросы.`;
+        body = body.replace(/^(Здравствуйте|Добрый день)[,.]?\\s*/i, '').trim();
+        body = \`Добрый день!\\n\\n${body}\`;
+        body = addClosing(body, 'Буду рада обсудить задачи и рассказать подробнее о своем опыте.');
         break;
       }
+
       case 'more_concrete': {
-        if (!body.includes('Факты и цифры') && !body.includes('- ')) {
-          body = body.replace(/(Из (ключевых|практических) результатов:?|В работе опираюсь на:?)/i, 'Факты и ключевые результаты:\n- ');
+        if (!/Факты и ключевые результаты|Факты и цифры/i.test(body)) {
+          body = body.replace(
+            /(Из (?:ключевых|практических) результатов:?|В работе опираюсь на:?)/i,
+            'Факты и ключевые результаты:'
+          );
         }
+        body = addClosing(body, 'Буду рада обсудить задачи и конкретные результаты, которые могу дать на этой позиции.');
         break;
       }
+
       case 'business_focused': {
-        body = body.replace(/^(Привет|Добрый день|Здравствуйте)[,!]?\s*/i, '');
-        body = `Здравствуйте.\n\n${body.trim()}`;
+        body = body.replace(/^(Привет|Добрый день|Здравствуйте)[,!]?\\s*/i, '').trim();
+        body = \`Здравствуйте.\\n\\n${body}\`;
+        body = addClosing(body, 'Буду рада обсудить задачи позиции и ожидаемый результат.');
         break;
       }
+
       case 'anti_bureaucracy': {
         body = body
           .replace(/внимательно изучила задачи позиции:?/gi, 'посмотрела требования к позиции:')
@@ -248,12 +281,25 @@ class AIService {
           .replace(/настоящим сообщаю/gi, '')
           .replace(/данная вакансия вызвала у меня интерес/gi, 'вакансия мне интересна')
           .replace(/осуществлять руководство/gi, 'руководить')
+          .replace(/пишу по поводу вакансии/gi, 'откликаюсь на вакансию')
+          .replace(/\\n{3,}/g, '\\n\\n')
           .trim();
+        body = addClosing(body, 'Буду рада обсудить задачи позиции.');
         break;
       }
+
       case 'default':
-      default:
+      default: {
+        // "Переписать" in the local fallback should at least produce a clean,
+        // single version instead of returning the input unchanged.
+        body = body
+          .replace(/^(Здравствуйте|Добрый день)[,.]?\\s*/i, '')
+          .replace(/\\n{3,}/g, '\\n\\n')
+          .trim();
+        body = \`Здравствуйте.\\n\\n${body}\`;
+        body = addClosing(body, 'Буду рада обсудить детали позиции и то, чем могу быть полезна вашему бизнесу.');
         break;
+      }
     }
 
     return ensureContactBlock(normalizeQuotesAndCurrency(body));
