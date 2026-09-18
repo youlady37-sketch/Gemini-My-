@@ -5,6 +5,7 @@ let currentVacancyCache: VacancyData | null = null;
 let lastUrl = window.location.href;
 let lastVacancyId: string | null = null;
 let retryTimer: number | null = null;
+let navigationGeneration = 0;
 let badgeElement: HTMLElement | null = null;
 
 function isVacancyUrl(url: string): boolean {
@@ -16,6 +17,11 @@ function getVacancyId(url: string): string | null {
 }
 
 function clearCurrentVacancy() {
+  navigationGeneration += 1;
+  if (retryTimer !== null) {
+    window.clearTimeout(retryTimer);
+    retryTimer = null;
+  }
   currentVacancyCache = null;
   lastVacancyId = null;
   removeBadge();
@@ -41,7 +47,9 @@ function notifyVacancy(vacancy: VacancyData) {
   }
 }
 
-function processCurrentPage(attempt = 0) {
+function processCurrentPage(attempt = 0, generation = navigationGeneration) {
+  if (generation !== navigationGeneration) return;
+
   const currentUrl = window.location.href;
   const vacancyId = getVacancyId(currentUrl);
 
@@ -59,9 +67,11 @@ function processCurrentPage(attempt = 0) {
   }
 
   const vacancy = extractVacancyFromDocument(document, currentUrl);
-  if (vacancy?.title) {
+  if (generation !== navigationGeneration || window.location.href !== currentUrl) return;
+
+  if (vacancy?.title && vacancy.vacancyId === vacancyId) {
     currentVacancyCache = vacancy;
-    lastVacancyId = vacancy.vacancyId ?? vacancyId;
+    lastVacancyId = vacancyId;
 
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.set({ hh_reply_ai_current_vacancy: vacancy }).catch(() => undefined);
@@ -69,13 +79,17 @@ function processCurrentPage(attempt = 0) {
 
     notifyVacancy(vacancy);
     injectOrUpdateBadge(vacancy);
+    retryTimer = null;
     return;
   }
 
   // HH.ru часто рендерит DOM асинхронно после смены URL в SPA.
-  if (attempt < 10) {
+  if (attempt < 10 && generation === navigationGeneration) {
     if (retryTimer !== null) window.clearTimeout(retryTimer);
-    retryTimer = window.setTimeout(() => processCurrentPage(attempt + 1), 350);
+    retryTimer = window.setTimeout(() => {
+      retryTimer = null;
+      processCurrentPage(attempt + 1, generation);
+    }, 350);
   }
 }
 
@@ -124,18 +138,17 @@ function removeBadge() {
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
     if (message.type === 'REQUEST_VACANCY_EXTRACT') {
-      const vacancy = extractVacancyFromDocument(document, window.location.href);
-      if (vacancy) {
+      const requestUrl = window.location.href;
+      const requestVacancyId = getVacancyId(requestUrl);
+      const vacancy = requestVacancyId ? extractVacancyFromDocument(document, requestUrl) : null;
+      if (vacancy?.vacancyId === requestVacancyId) {
         currentVacancyCache = vacancy;
         lastVacancyId = vacancy.vacancyId;
         sendResponse(vacancy);
+      } else if (requestVacancyId && currentVacancyCache?.vacancyId === requestVacancyId) {
+        sendResponse(currentVacancyCache);
       } else {
-        const currentUrlId = getVacancyId(window.location.href);
-        if (currentVacancyCache && currentVacancyCache.vacancyId === currentUrlId) {
-          sendResponse(currentVacancyCache);
-        } else {
-          sendResponse(null);
-        }
+        sendResponse(null);
       }
       return true;
     }
@@ -148,10 +161,15 @@ function handleNavigation() {
     processCurrentPage();
     return;
   }
+
   lastUrl = url;
-  if (retryTimer !== null) window.clearTimeout(retryTimer);
+  navigationGeneration += 1;
+  if (retryTimer !== null) {
+    window.clearTimeout(retryTimer);
+    retryTimer = null;
+  }
   clearCurrentVacancy();
-  processCurrentPage();
+  processCurrentPage(0, navigationGeneration);
 }
 
 function observeNavigation() {
