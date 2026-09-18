@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Sparkles,
   Search,
@@ -45,6 +45,7 @@ export const SidePanelApp: React.FC = () => {
   const [isRewriting, setIsRewriting] = useState(false);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const requestGenerationRef = useRef(0);
 
   const loadInitialData = useCallback(async () => {
     try {
@@ -86,12 +87,14 @@ export const SidePanelApp: React.FC = () => {
     if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
       const messageListener = (message: any) => {
         if (message.type === 'VACANCY_DETECTED' && message.payload) {
+          requestGenerationRef.current += 1;
           setCurrentVacancy(message.payload);
           setAnalysis(null);
           setCoverLetterText('');
           setAppState('VACANCY_FOUND');
           setErrorMessage(null);
         } else if (message.type === 'VACANCY_CLEARED') {
+          requestGenerationRef.current += 1;
           setCurrentVacancy(null);
           setAnalysis(null);
           setCoverLetterText('');
@@ -107,36 +110,48 @@ export const SidePanelApp: React.FC = () => {
   const handleAnalyzeAndGenerate = async (targetMode: RewriteMode = 'default') => {
     if (!currentVacancy || !userProfile) return;
 
+    const requestGeneration = ++requestGenerationRef.current;
+    const vacancySnapshot = currentVacancy;
+    const profileSnapshot = userProfile;
+    const analysisSnapshot = analysis;
+
     setAppState('ANALYZING');
     setErrorMessage(null);
     setCurrentMode(targetMode);
 
     try {
-      let currentAnalysis = analysis;
+      let currentAnalysis = analysisSnapshot;
       if (!currentAnalysis) {
-        currentAnalysis = await aiService.analyzeVacancy(currentVacancy, userProfile);
+        currentAnalysis = await aiService.analyzeVacancy(vacancySnapshot, profileSnapshot);
+        if (requestGeneration !== requestGenerationRef.current) return;
         setAnalysis(currentAnalysis);
-        if (currentVacancy.vacancyId) {
-          await storageService.saveAnalysis(currentVacancy.vacancyId, currentAnalysis);
+        if (vacancySnapshot.vacancyId) {
+          await storageService.saveAnalysis(vacancySnapshot.vacancyId, currentAnalysis);
+          if (requestGeneration !== requestGenerationRef.current) return;
         }
       }
 
-      const letter = await aiService.generateCoverLetter(currentVacancy, userProfile, currentAnalysis, targetMode);
+      const letter = await aiService.generateCoverLetter(vacancySnapshot, profileSnapshot, currentAnalysis, targetMode);
+      if (requestGeneration !== requestGenerationRef.current) return;
+
       setCoverLetterText(letter);
       setAppState('LETTER_READY');
 
       await storageService.addToHistory({
-        vacancyId: currentVacancy.vacancyId,
-        vacancyTitle: currentVacancy.title,
-        company: currentVacancy.company,
-        salary: currentVacancy.salary,
-        location: currentVacancy.location,
+        vacancyId: vacancySnapshot.vacancyId,
+        vacancyTitle: vacancySnapshot.title,
+        company: vacancySnapshot.company,
+        salary: vacancySnapshot.salary,
+        location: vacancySnapshot.location,
         coverLetter: letter
       });
 
+      if (requestGeneration !== requestGenerationRef.current) return;
       const updatedHistory = await storageService.getHistory();
+      if (requestGeneration !== requestGenerationRef.current) return;
       setHistoryItems(updatedHistory);
     } catch (err) {
+      if (requestGeneration !== requestGenerationRef.current) return;
       console.error('Error during analysis/generation:', err);
       setErrorMessage('Не удалось завершить генерацию. Пожалуйста, попробуйте еще раз.');
       setAppState('ERROR');
@@ -163,6 +178,7 @@ export const SidePanelApp: React.FC = () => {
   };
 
   const handleRefresh = async () => {
+    requestGenerationRef.current += 1;
     setIsRefreshing(true);
     try {
       const vacancy = await vacancyService.fetchCurrentVacancyFromTab();
@@ -186,6 +202,7 @@ export const SidePanelApp: React.FC = () => {
   };
 
   const handleLoadSample = (sample: VacancyData) => {
+    requestGenerationRef.current += 1;
     setCurrentVacancy(sample);
     setAnalysis(null);
     setCoverLetterText('');
@@ -195,6 +212,7 @@ export const SidePanelApp: React.FC = () => {
   };
 
   const handleSelectHistoryItem = (item: HistoryItem) => {
+    requestGenerationRef.current += 1;
     setCurrentVacancy({
       vacancyId: item.vacancyId,
       url: item.vacancyId ? `https://hh.ru/vacancy/${item.vacancyId}` : 'https://hh.ru',
