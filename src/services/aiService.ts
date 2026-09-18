@@ -172,7 +172,9 @@ class AIService {
     mode: RewriteMode = 'default'
   ): Promise<string> {
     const textToRewrite = (currentText || '').trim();
-    if (!textToRewrite) return this.generateCoverLetter(vacancy, profile, analysis, mode);
+    if (!textToRewrite) {
+      throw new Error('Нечего переписывать: текущий текст письма пуст. Сначала создайте письмо или верните текст.');
+    }
 
     if (this.config.provider === 'server_proxy') {
       const baseUrl = this.ensureProxyConfigured();
@@ -209,7 +211,9 @@ class AIService {
       .replace(/\+79151000852[\s\S]*$/i, '')
       .trim();
 
-    if (!body) return this.generateLocally(vacancy, profile, analysis, mode);
+    if (!body) {
+      throw new Error('В письме остался только контактный блок. Добавьте текст письма перед переписыванием.');
+    }
 
     switch (mode) {
       case 'shorter': {
