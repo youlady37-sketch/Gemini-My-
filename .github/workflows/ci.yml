@@ -18,13 +18,9 @@ jobs:
       - run: npm install
       - run: npm run lint
       - run: npm run build
-      - name: Package extension
-        run: |
-          cd dist
-          zip -r ../hh-reply-ai-extension.zip .
       - name: Upload extension artifact
         uses: actions/upload-artifact@v4
         with:
           name: hh-reply-ai-extension
-          path: hh-reply-ai-extension.zip
+          path: dist/
           if-no-files-found: error
